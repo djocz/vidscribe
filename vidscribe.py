@@ -838,6 +838,11 @@ def run_pipeline(
 
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
+    # ── Sanitise show name to snake_case ─────────────────────────────────────
+    if show:
+        show = re.sub(r"[^\w\s\-]", "", show, flags=re.UNICODE)
+        show = re.sub(r"\s+", "_", show.strip()).lower() or "show"
+
     # ── Detect input type and resolve video ID ───────────────────────────────
     if _is_youtube_url(input_value):
         source_type = "youtube"
