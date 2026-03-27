@@ -578,7 +578,7 @@ def _rfc822_now() -> str:
     return formatdate(localtime=False)
 
 
-def _generate_rss(title: str, audio_path: str, result: dict, output_file: str, audio_url: str = "", description: str = "", pub_date: str = "") -> str:
+def _generate_rss(title: str, audio_path: str, result: dict, output_file: str, audio_url: str = "", description: str = "", pub_date: str = "", author: str = "") -> str:
     """
     Write a podcast RSS 2.0 feed for the episode.
 
@@ -602,7 +602,7 @@ def _generate_rss(title: str, audio_path: str, result: dict, output_file: str, a
         '  <channel>\n'
         f'    <title>{_xml_escape(title)}</title>\n'
         f'    <description>{_xml_escape(description)}</description>\n'
-        '    <itunes:author>vidscribe</itunes:author>\n'
+        f'    <itunes:author>{_xml_escape(author or "vidscribe")}</itunes:author>\n'
         '    <itunes:explicit>false</itunes:explicit>\n'
         '    <item>\n'
         f'      <title>{_xml_escape(title)}</title>\n'
@@ -634,6 +634,7 @@ def publish_podcast(
     audio_url: str = "",
     description: str = "",
     pub_date: str = "",
+    author: str = "",
 ) -> dict:
     """
     Write a podcast_feed.xml RSS 2.0 feed for the episode.
@@ -645,7 +646,7 @@ def publish_podcast(
     Returns {"rss_file": str}.
     """
     rss_file = os.path.join(video_folder, "podcast_feed.xml")
-    _generate_rss(title, audio_path, result, rss_file, audio_url=audio_url, description=description, pub_date=pub_date)
+    _generate_rss(title, audio_path, result, rss_file, audio_url=audio_url, description=description, pub_date=pub_date, author=author)
     return {"rss_file": rss_file}
 
 
@@ -1015,6 +1016,13 @@ def run_pipeline(
         or (base_url.rstrip("/") + "/" + os.path.basename(audio_file) if base_url else "")
     )
 
+    # ── Load show meta for author name (if show is set) ──────────────────────
+    show_author = ""
+    if show:
+        _show_dir  = os.path.join(OUTPUTS_DIR, show)
+        _show_meta = _load_show_index(_show_dir).get("meta", {})
+        show_author = _show_meta.get("host") or _show_meta.get("author") or ""
+
     # ── Publish as podcast (optional) ────────────────────────────────────────
     podcast_result = None
     show_feed_file = None
@@ -1027,6 +1035,7 @@ def run_pipeline(
             audio_url    = audio_url,
             description  = yt_description,
             pub_date     = pub_date,
+            author       = show_author,
         )
 
     # ── Update per-show RSS feed (when --show is given) ───────────────────────
