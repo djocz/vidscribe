@@ -530,10 +530,107 @@ Example format:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  STEP 5 — Podcast publishing  (optional, --publish)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _xml_escape(text: str) -> str:
+    return (text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+def _format_duration(seconds: float) -> str:
+    h, r = divmod(int(seconds), 3600)
+    m, s = divmod(r, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _rfc822_now() -> str:
+    from email.utils import formatdate
+    return formatdate(localtime=False)
+
+
+def _generate_rss(title: str, audio_path: str, result: dict, output_file: str, audio_url: str = "") -> str:
+    """
+    Write a podcast RSS 2.0 feed for the episode.
+
+    If audio_url is empty a placeholder is written — the user must replace it
+    with the public URL of the hosted audio before submitting to platforms.
+    """
+    segments    = result.get("segments", [])
+    duration    = _format_duration(segments[-1]["end"]) if segments else "00:00:00"
+    audio_size  = os.path.getsize(audio_path) if os.path.isfile(audio_path) else 0
+    url         = audio_url or "REPLACE_WITH_PUBLIC_AUDIO_URL"
+    description = result.get("text", "").strip()[:300]
+    if len(result.get("text", "")) > 300:
+        description += "..."
+
+    feed = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<rss version="2.0"\n'
+        '     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">\n'
+        '  <channel>\n'
+        f'    <title>{_xml_escape(title)}</title>\n'
+        f'    <description>{_xml_escape(description)}</description>\n'
+        '    <itunes:author>vidscribe</itunes:author>\n'
+        '    <itunes:explicit>false</itunes:explicit>\n'
+        '    <item>\n'
+        f'      <title>{_xml_escape(title)}</title>\n'
+        f'      <description>{_xml_escape(description)}</description>\n'
+        f'      <enclosure url="{url}" length="{audio_size}" type="audio/mpeg"/>\n'
+        f'      <guid isPermaLink="false">{url}</guid>\n'
+        f'      <pubDate>{_rfc822_now()}</pubDate>\n'
+        f'      <itunes:duration>{duration}</itunes:duration>\n'
+        '    </item>\n'
+        '  </channel>\n'
+        '</rss>\n'
+    )
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(feed)
+
+    print(f"  RSS feed saved   -> {output_file}")
+    if not audio_url:
+        print("  [NOTE] Edit podcast_feed.xml and replace REPLACE_WITH_PUBLIC_AUDIO_URL")
+        print("         with the public URL of your hosted audio before submitting to platforms.")
+    return output_file
+
+
+def publish_podcast(
+    title: str,
+    audio_path: str,
+    result: dict,
+    video_folder: str,
+    base_url: str = "",
+) -> dict:
+    """
+    Write a podcast_feed.xml RSS 2.0 feed for the episode.
+
+    base_url — if provided, the audio URL is set to base_url/audio.mp3
+               instead of a placeholder, e.g.:
+               https://my-bucket.r2.dev/podcast/my_video/
+
+    Returns {"rss_file": str}.
+    """
+    rss_file  = os.path.join(video_folder, "podcast_feed.xml")
+    audio_url = base_url.rstrip("/") + "/" + os.path.basename(audio_path) if base_url else ""
+    _generate_rss(title, audio_path, result, rss_file, audio_url=audio_url)
+    return {"rss_file": rss_file}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Main pipeline  (called by the `run` sub-command)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_pipeline(input_value: str, whisper_model: str = "small", chapters: bool = False) -> dict:
+def run_pipeline(
+    input_value: str,
+    whisper_model: str = "small",
+    chapters: bool = False,
+    publish: bool = False,
+    base_url: str = "",
+) -> dict:
     print("\n" + "=" * 60)
     print("  Subtitle & Transcript Generator")
     print("=" * 60 + "\n")
@@ -604,6 +701,17 @@ def run_pipeline(input_value: str, whisper_model: str = "small", chapters: bool 
             output_file = os.path.join(video_folder, "chapters.txt"),
         )
 
+    # ── Publish as podcast (optional) ────────────────────────────────────────
+    podcast_result = None
+    if publish:
+        podcast_result = publish_podcast(
+            title        = title,
+            audio_path   = audio_file,
+            result       = result,
+            video_folder = video_folder,
+            base_url     = base_url,
+        )
+
     # ── Write manifest ───────────────────────────────────────────────────────
     manifest_data = {
         "video_id":      vid_id,
@@ -619,20 +727,22 @@ def run_pipeline(input_value: str, whisper_model: str = "small", chapters: bool 
             "vtt":        os.path.basename(vtt_file),
             "transcript": os.path.basename(txt_file),
             "chapters":   os.path.basename(chapters_file) if chapters_file else None,
+            "podcast_rss": os.path.basename(podcast_result["rss_file"]) if podcast_result else None,
         },
     }
     manifest_file = _write_manifest(video_folder, manifest_data)
 
     print(f"\n  Done!  outputs/{vid_id}/\n")
     return {
-        "video_id":    vid_id,
-        "folder":      video_folder,
-        "audio":       audio_file,
-        "srt":         srt_file,
-        "vtt":         vtt_file,
-        "transcript":  txt_file,
-        "chapters":    chapters_file,
-        "manifest":    manifest_file,
+        "video_id":      vid_id,
+        "folder":        video_folder,
+        "audio":         audio_file,
+        "srt":           srt_file,
+        "vtt":           vtt_file,
+        "transcript":    txt_file,
+        "chapters":      chapters_file,
+        "manifest":      manifest_file,
+        "podcast_rss":   podcast_result["rss_file"] if podcast_result else None,
     }
 
 
@@ -641,6 +751,8 @@ def cmd_run(args: argparse.Namespace) -> None:
         input_value   = args.input,
         whisper_model = args.model,
         chapters      = args.chapters,
+        publish       = args.publish,
+        base_url      = args.base_url,
     )
 
 
@@ -675,6 +787,12 @@ examples:
 
   Transcribe + chapters in one go:
     python vidscribe.py run --input "https://youtube.com/watch?v=abc123" --model medium --chapters
+
+  Publish as a podcast (generates local RSS feed):
+    python vidscribe.py run --input "..." --publish
+
+  Publish with audio host URL pre-filled in the RSS feed:
+    python vidscribe.py run --input "..." --publish --base-url https://pub-abc.r2.dev/podcast/my_video
 
 uploading subtitles to youtube:
   YouTube Studio -> your video -> Subtitles -> Add -> Upload file -> select .vtt
@@ -721,6 +839,27 @@ adding chapters to youtube:
             "Generate AI-based chapter markers using the Claude API. "
             "Requires ANTHROPIC_API_KEY environment variable to be set. "
             "Output is saved to chapters.txt and printed to the terminal."
+        ),
+    )
+    run_p.add_argument(
+        "--publish", "-p",
+        action="store_true",
+        default=False,
+        help=(
+            "Publish the extracted audio as a podcast episode. "
+            "Generates podcast_feed.xml in the output folder. "
+            "Use --host to upload directly to a hosting service."
+        ),
+    )
+    run_p.add_argument(
+        "--base-url",
+        default="",
+        metavar="URL",
+        dest="base_url",
+        help=(
+            "Base URL where you will host the audio file (rss mode only). "
+            "The audio filename is appended automatically. "
+            "Example: --base-url https://pub-abc123.r2.dev/podcast/my_video"
         ),
     )
     run_p.set_defaults(func=cmd_run)
