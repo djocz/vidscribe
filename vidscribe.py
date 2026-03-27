@@ -207,14 +207,15 @@ def _local_video_id(path: str) -> str:
 #  STEP 1a — Download audio from a YouTube URL
 # ══════════════════════════════════════════════════════════════════════════════
 
-def download_youtube(url: str, video_folder: str) -> tuple[str, str, str, str, str]:
+def download_youtube(url: str, video_folder: str) -> tuple[str, str, str, str, str, str]:
     """
     Download audio from a YouTube URL using yt-dlp.
     Saved as {video_folder}/audio.mp3.
 
     Returns:
-        (audio_filepath, video_id, video_title, video_description, pub_date)
+        (audio_filepath, video_id, video_title, video_description, pub_date, thumbnail_url)
         pub_date is RFC 822 formatted from the video's upload date.
+        thumbnail_url is the highest-quality thumbnail available.
     """
     from email.utils import formatdate as _formatdate
 
@@ -250,9 +251,18 @@ def download_youtube(url: str, video_folder: str) -> tuple[str, str, str, str, s
             else:
                 pub_date = ""
 
+        # Pick the highest-resolution thumbnail available
+        thumbnails     = info.get("thumbnails") or []
+        thumbnail_url  = ""
+        if thumbnails:
+            # thumbnails list is ordered lowest to highest resolution by yt-dlp
+            thumbnail_url = thumbnails[-1].get("url", "")
+        if not thumbnail_url:
+            thumbnail_url = info.get("thumbnail", "")
+
     audio_file = f"{audio_base}.mp3"
     print(f"  Audio saved      -> {audio_file}")
-    return audio_file, vid_id, title, description, pub_date
+    return audio_file, vid_id, title, description, pub_date, thumbnail_url
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -651,6 +661,7 @@ _SHOW_META_DEFAULTS = {
     "category":    "",
     "owner_email": "",
     "language":    "en",
+    "image_url":   "",
 }
 
 
@@ -694,10 +705,11 @@ def _build_show_feed(show: str, index: dict) -> str:
     category   = meta.get("category", "")
     owner      = meta.get("owner_email", "")
     language   = meta.get("language", "en")
+    image_url  = meta.get("image_url", "")
 
     items = []
     for ep in index["episodes"]:
-        items.append(
+        item = (
             "    <item>\n"
             f"      <title>{_xml_escape(ep['title'])}</title>\n"
             f"      <description>{_xml_escape(ep['description'])}</description>\n"
@@ -705,8 +717,11 @@ def _build_show_feed(show: str, index: dict) -> str:
             f"      <guid isPermaLink=\"false\">{ep['guid']}</guid>\n"
             f"      <pubDate>{ep['pub_date']}</pubDate>\n"
             f"      <itunes:duration>{ep['duration']}</itunes:duration>\n"
-            "    </item>"
         )
+        if ep.get("thumbnail_url"):
+            item += f"      <itunes:image href=\"{ep['thumbnail_url']}\"/>\n"
+        item += "    </item>"
+        items.append(item)
 
     channel = (
         f'    <title>{_xml_escape(show_title)}</title>\n'
@@ -726,6 +741,8 @@ def _build_show_feed(show: str, index: dict) -> str:
         )
     if category:
         channel += f'    <itunes:category text="{_xml_escape(category)}"/>\n'
+    if image_url:
+        channel += f'    <itunes:image href="{_xml_escape(image_url)}"/>\n'
 
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -748,6 +765,7 @@ def update_show_feed(
     result: dict,
     description: str = "",
     pub_date: str = "",
+    thumbnail_url: str = "",
 ) -> str:
     """
     Add or update an episode in the show-level RSS feed.
@@ -773,7 +791,8 @@ def update_show_feed(
         "description": description,
         "audio_url":   audio_url or f"REPLACE_WITH_PUBLIC_AUDIO_URL/{vid_id}/audio.mp3",
         "audio_size":  os.path.getsize(audio_path) if os.path.isfile(audio_path) else 0,
-        "duration":    _format_duration(segments[-1]["end"]) if segments else "00:00:00",
+        "duration":       _format_duration(segments[-1]["end"]) if segments else "00:00:00",
+        "thumbnail_url":  thumbnail_url,
         "pub_date":    pub_date or _rfc822_now(),
     }
 
@@ -932,7 +951,7 @@ def run_pipeline(
         folder_display = f"outputs/{show}/{vid_id}/" if show else f"outputs/{vid_id}/"
         print(f"  Output folder    -> {folder_display}\n")
 
-        audio_file, _, title, yt_description, pub_date = download_youtube(input_value, video_folder)
+        audio_file, _, title, yt_description, pub_date, thumbnail_url = download_youtube(input_value, video_folder)
 
     elif _is_local_file(input_value):
         ext = os.path.splitext(input_value)[1].lower()
@@ -953,6 +972,7 @@ def run_pipeline(
         audio_file, _, title = prepare_local(input_value, video_folder)
         yt_description = ""
         pub_date       = ""
+        thumbnail_url  = ""
 
     else:
         print(
@@ -1012,14 +1032,15 @@ def run_pipeline(
     # ── Update per-show RSS feed (when --show is given) ───────────────────────
     if show and (publish or upload):
         show_feed_file = update_show_feed(
-            show        = show,
-            vid_id      = vid_id,
-            title       = title,
-            audio_path  = audio_file,
-            audio_url   = audio_url,
-            result      = result,
-            description = yt_description,
-            pub_date    = pub_date,
+            show          = show,
+            vid_id        = vid_id,
+            title         = title,
+            audio_path    = audio_file,
+            audio_url     = audio_url,
+            result        = result,
+            description   = yt_description,
+            pub_date      = pub_date,
+            thumbnail_url = thumbnail_url,
         )
         # Upload show feed to R2 so the URL is always current
         if upload == "r2":
