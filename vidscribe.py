@@ -207,14 +207,17 @@ def _local_video_id(path: str) -> str:
 #  STEP 1a — Download audio from a YouTube URL
 # ══════════════════════════════════════════════════════════════════════════════
 
-def download_youtube(url: str, video_folder: str) -> tuple[str, str, str, str]:
+def download_youtube(url: str, video_folder: str) -> tuple[str, str, str, str, str]:
     """
     Download audio from a YouTube URL using yt-dlp.
     Saved as {video_folder}/audio.mp3.
 
     Returns:
-        (audio_filepath, video_id, video_title, video_description)
+        (audio_filepath, video_id, video_title, video_description, pub_date)
+        pub_date is RFC 822 formatted from the video's upload date.
     """
+    from email.utils import formatdate as _formatdate
+
     yt_dlp     = _require("yt_dlp", "yt-dlp")
     audio_base = os.path.join(video_folder, "audio")
 
@@ -235,9 +238,21 @@ def download_youtube(url: str, video_folder: str) -> tuple[str, str, str, str]:
         title       = info.get("title", "Unknown Title")
         description = info.get("description", "").strip()
 
+        # Use unix timestamp if available, fall back to upload_date (YYYYMMDD)
+        timestamp   = info.get("timestamp")
+        if timestamp:
+            pub_date = _formatdate(timestamp, localtime=False)
+        else:
+            upload_date = info.get("upload_date", "")
+            if upload_date:
+                dt = datetime.strptime(upload_date, "%Y%m%d")
+                pub_date = _formatdate(dt.timestamp(), localtime=False)
+            else:
+                pub_date = ""
+
     audio_file = f"{audio_base}.mp3"
     print(f"  Audio saved      -> {audio_file}")
-    return audio_file, vid_id, title, description
+    return audio_file, vid_id, title, description, pub_date
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -553,7 +568,7 @@ def _rfc822_now() -> str:
     return formatdate(localtime=False)
 
 
-def _generate_rss(title: str, audio_path: str, result: dict, output_file: str, audio_url: str = "", description: str = "") -> str:
+def _generate_rss(title: str, audio_path: str, result: dict, output_file: str, audio_url: str = "", description: str = "", pub_date: str = "") -> str:
     """
     Write a podcast RSS 2.0 feed for the episode.
 
@@ -584,7 +599,7 @@ def _generate_rss(title: str, audio_path: str, result: dict, output_file: str, a
         f'      <description>{_xml_escape(description)}</description>\n'
         f'      <enclosure url="{url}" length="{audio_size}" type="audio/mpeg"/>\n'
         f'      <guid isPermaLink="false">{url}</guid>\n'
-        f'      <pubDate>{_rfc822_now()}</pubDate>\n'
+        f'      <pubDate>{pub_date or _rfc822_now()}</pubDate>\n'
         f'      <itunes:duration>{duration}</itunes:duration>\n'
         '    </item>\n'
         '  </channel>\n'
@@ -608,6 +623,7 @@ def publish_podcast(
     video_folder: str,
     audio_url: str = "",
     description: str = "",
+    pub_date: str = "",
 ) -> dict:
     """
     Write a podcast_feed.xml RSS 2.0 feed for the episode.
@@ -619,7 +635,7 @@ def publish_podcast(
     Returns {"rss_file": str}.
     """
     rss_file = os.path.join(video_folder, "podcast_feed.xml")
-    _generate_rss(title, audio_path, result, rss_file, audio_url=audio_url, description=description)
+    _generate_rss(title, audio_path, result, rss_file, audio_url=audio_url, description=description, pub_date=pub_date)
     return {"rss_file": rss_file}
 
 
@@ -682,6 +698,7 @@ def update_show_feed(
     audio_url: str,
     result: dict,
     description: str = "",
+    pub_date: str = "",
 ) -> str:
     """
     Add or update an episode in the show-level RSS feed.
@@ -708,7 +725,7 @@ def update_show_feed(
         "audio_url":   audio_url or f"REPLACE_WITH_PUBLIC_AUDIO_URL/{vid_id}/audio.mp3",
         "audio_size":  os.path.getsize(audio_path) if os.path.isfile(audio_path) else 0,
         "duration":    _format_duration(segments[-1]["end"]) if segments else "00:00:00",
-        "pub_date":    _rfc822_now(),
+        "pub_date":    pub_date or _rfc822_now(),
     }
 
     index = _load_show_index(show_dir)
@@ -866,7 +883,7 @@ def run_pipeline(
         folder_display = f"outputs/{show}/{vid_id}/" if show else f"outputs/{vid_id}/"
         print(f"  Output folder    -> {folder_display}\n")
 
-        audio_file, _, title, yt_description = download_youtube(input_value, video_folder)
+        audio_file, _, title, yt_description, pub_date = download_youtube(input_value, video_folder)
 
     elif _is_local_file(input_value):
         ext = os.path.splitext(input_value)[1].lower()
@@ -886,6 +903,7 @@ def run_pipeline(
 
         audio_file, _, title = prepare_local(input_value, video_folder)
         yt_description = ""
+        pub_date       = ""
 
     else:
         print(
@@ -939,6 +957,7 @@ def run_pipeline(
             video_folder = video_folder,
             audio_url    = audio_url,
             description  = yt_description,
+            pub_date     = pub_date,
         )
 
     # ── Update per-show RSS feed (when --show is given) ───────────────────────
@@ -951,6 +970,7 @@ def run_pipeline(
             audio_url   = audio_url,
             result      = result,
             description = yt_description,
+            pub_date    = pub_date,
         )
         # Upload show feed to R2 so the URL is always current
         if upload == "r2":
