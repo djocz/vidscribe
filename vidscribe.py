@@ -970,7 +970,7 @@ def run_pipeline(
             "transcript": os.path.basename(txt_file),
             "chapters":   os.path.basename(chapters_file) if chapters_file else None,
             "podcast_rss":  os.path.basename(podcast_result["rss_file"]) if podcast_result else None,
-            "show_feed":    show_feed_file,
+            "show_feed":    os.path.basename(show_feed_file) if show_feed_file else None,
             "r2_audio_url": r2_audio_url or None,
         },
     }
@@ -1098,7 +1098,7 @@ adding chapters to youtube:
         help=(
             "Publish the extracted audio as a podcast episode. "
             "Generates podcast_feed.xml in the output folder. "
-            "Use --host to upload directly to a hosting service."
+            "Use --upload r2 to upload audio automatically."
         ),
     )
     run_p.add_argument(
