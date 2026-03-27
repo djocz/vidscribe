@@ -861,9 +861,10 @@ def run_pipeline(
             info   = ydl.extract_info(input_value, download=False)
             vid_id = info.get("id", "unknown")
 
-        video_folder = os.path.join(OUTPUTS_DIR, vid_id)
+        video_folder = os.path.join(OUTPUTS_DIR, show, vid_id) if show else os.path.join(OUTPUTS_DIR, vid_id)
         os.makedirs(video_folder, exist_ok=True)
-        print(f"  Output folder    -> outputs/{vid_id}/\n")
+        folder_display = f"outputs/{show}/{vid_id}/" if show else f"outputs/{vid_id}/"
+        print(f"  Output folder    -> {folder_display}\n")
 
         audio_file, _, title, yt_description = download_youtube(input_value, video_folder)
 
@@ -877,10 +878,11 @@ def run_pipeline(
 
         source_type  = "local"
         vid_id       = _local_video_id(input_value)
-        video_folder = os.path.join(OUTPUTS_DIR, vid_id)
+        video_folder = os.path.join(OUTPUTS_DIR, show, vid_id) if show else os.path.join(OUTPUTS_DIR, vid_id)
         os.makedirs(video_folder, exist_ok=True)
+        folder_display = f"outputs/{show}/{vid_id}/" if show else f"outputs/{vid_id}/"
         print(f"  Source           -> Local file  ({input_value})")
-        print(f"  Output folder    -> outputs/{vid_id}/\n")
+        print(f"  Output folder    -> {folder_display}\n")
 
         audio_file, _, title = prepare_local(input_value, video_folder)
         yt_description = ""
@@ -976,7 +978,7 @@ def run_pipeline(
     }
     manifest_file = _write_manifest(video_folder, manifest_data)
 
-    print(f"\n  Done!  outputs/{vid_id}/\n")
+    print(f"\n  Done!  {folder_display}\n")
     return {
         "video_id":      vid_id,
         "folder":        video_folder,
