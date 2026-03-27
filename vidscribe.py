@@ -207,13 +207,13 @@ def _local_video_id(path: str) -> str:
 #  STEP 1a — Download audio from a YouTube URL
 # ══════════════════════════════════════════════════════════════════════════════
 
-def download_youtube(url: str, video_folder: str) -> tuple[str, str, str]:
+def download_youtube(url: str, video_folder: str) -> tuple[str, str, str, str]:
     """
     Download audio from a YouTube URL using yt-dlp.
     Saved as {video_folder}/audio.mp3.
 
     Returns:
-        (audio_filepath, video_id, video_title)
+        (audio_filepath, video_id, video_title, video_description)
     """
     yt_dlp     = _require("yt_dlp", "yt-dlp")
     audio_base = os.path.join(video_folder, "audio")
@@ -230,13 +230,14 @@ def download_youtube(url: str, video_folder: str) -> tuple[str, str, str]:
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info   = ydl.extract_info(url, download=True)
-        vid_id = info.get("id", "unknown")
-        title  = info.get("title", "Unknown Title")
+        info        = ydl.extract_info(url, download=True)
+        vid_id      = info.get("id", "unknown")
+        title       = info.get("title", "Unknown Title")
+        description = info.get("description", "").strip()
 
     audio_file = f"{audio_base}.mp3"
     print(f"  Audio saved      -> {audio_file}")
-    return audio_file, vid_id, title
+    return audio_file, vid_id, title, description
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -552,20 +553,22 @@ def _rfc822_now() -> str:
     return formatdate(localtime=False)
 
 
-def _generate_rss(title: str, audio_path: str, result: dict, output_file: str, audio_url: str = "") -> str:
+def _generate_rss(title: str, audio_path: str, result: dict, output_file: str, audio_url: str = "", description: str = "") -> str:
     """
     Write a podcast RSS 2.0 feed for the episode.
 
     If audio_url is empty a placeholder is written — the user must replace it
     with the public URL of the hosted audio before submitting to platforms.
+    description — if empty, falls back to the first 300 chars of the transcript.
     """
-    segments    = result.get("segments", [])
-    duration    = _format_duration(segments[-1]["end"]) if segments else "00:00:00"
-    audio_size  = os.path.getsize(audio_path) if os.path.isfile(audio_path) else 0
-    url         = audio_url or "REPLACE_WITH_PUBLIC_AUDIO_URL"
-    description = result.get("text", "").strip()[:300]
-    if len(result.get("text", "")) > 300:
-        description += "..."
+    segments   = result.get("segments", [])
+    duration   = _format_duration(segments[-1]["end"]) if segments else "00:00:00"
+    audio_size = os.path.getsize(audio_path) if os.path.isfile(audio_path) else 0
+    url        = audio_url or "REPLACE_WITH_PUBLIC_AUDIO_URL"
+    if not description:
+        description = result.get("text", "").strip()[:300]
+        if len(result.get("text", "")) > 300:
+            description += "..."
 
     feed = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -604,17 +607,19 @@ def publish_podcast(
     result: dict,
     video_folder: str,
     audio_url: str = "",
+    description: str = "",
 ) -> dict:
     """
     Write a podcast_feed.xml RSS 2.0 feed for the episode.
 
-    audio_url — full public URL of the hosted audio file. If empty, a
-                placeholder is written that the user must replace manually.
+    audio_url   — full public URL of the hosted audio file. If empty, a
+                  placeholder is written that the user must replace manually.
+    description — episode description. Falls back to transcript excerpt.
 
     Returns {"rss_file": str}.
     """
     rss_file = os.path.join(video_folder, "podcast_feed.xml")
-    _generate_rss(title, audio_path, result, rss_file, audio_url=audio_url)
+    _generate_rss(title, audio_path, result, rss_file, audio_url=audio_url, description=description)
     return {"rss_file": rss_file}
 
 
@@ -676,6 +681,7 @@ def update_show_feed(
     audio_path: str,
     audio_url: str,
     result: dict,
+    description: str = "",
 ) -> str:
     """
     Add or update an episode in the show-level RSS feed.
@@ -689,10 +695,11 @@ def update_show_feed(
     show_dir = os.path.join(OUTPUTS_DIR, show)
     os.makedirs(show_dir, exist_ok=True)
 
-    segments    = result.get("segments", [])
-    description = result.get("text", "").strip()[:300]
-    if len(result.get("text", "")) > 300:
-        description += "..."
+    segments = result.get("segments", [])
+    if not description:
+        description = result.get("text", "").strip()[:300]
+        if len(result.get("text", "")) > 300:
+            description += "..."
 
     episode = {
         "guid":        vid_id,
@@ -858,7 +865,7 @@ def run_pipeline(
         os.makedirs(video_folder, exist_ok=True)
         print(f"  Output folder    -> outputs/{vid_id}/\n")
 
-        audio_file, _, title = download_youtube(input_value, video_folder)
+        audio_file, _, title, yt_description = download_youtube(input_value, video_folder)
 
     elif _is_local_file(input_value):
         ext = os.path.splitext(input_value)[1].lower()
@@ -876,6 +883,7 @@ def run_pipeline(
         print(f"  Output folder    -> outputs/{vid_id}/\n")
 
         audio_file, _, title = prepare_local(input_value, video_folder)
+        yt_description = ""
 
     else:
         print(
@@ -928,17 +936,19 @@ def run_pipeline(
             result       = result,
             video_folder = video_folder,
             audio_url    = audio_url,
+            description  = yt_description,
         )
 
     # ── Update per-show RSS feed (when --show is given) ───────────────────────
     if show and (publish or upload):
         show_feed_file = update_show_feed(
-            show       = show,
-            vid_id     = vid_id,
-            title      = title,
-            audio_path = audio_file,
-            audio_url  = audio_url,
-            result     = result,
+            show        = show,
+            vid_id      = vid_id,
+            title       = title,
+            audio_path  = audio_file,
+            audio_url   = audio_url,
+            result      = result,
+            description = yt_description,
         )
         # Upload show feed to R2 so the URL is always current
         if upload == "r2":
