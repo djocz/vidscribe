@@ -643,13 +643,37 @@ def publish_podcast(
 #  STEP 6 — Per-show RSS feed  (accumulates all episodes for a show)
 # ══════════════════════════════════════════════════════════════════════════════
 
+_SHOW_META_DEFAULTS = {
+    "author":      "",
+    "link":        "",
+    "category":    "",
+    "owner_email": "",
+    "language":    "en",
+}
+
+
 def _load_show_index(show_dir: str) -> dict:
-    """Load show_index.json or return a fresh empty index."""
+    """
+    Load show_index.json or create it with an empty meta + episodes structure.
+
+    On first run the meta section is written with blank placeholders and a
+    notice is printed so the user knows to fill it in.
+    """
     path = os.path.join(show_dir, "show_index.json")
     if os.path.isfile(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"episodes": []}
+        index = json.load(open(path, "r", encoding="utf-8"))
+        # Back-fill meta key if missing (older index files)
+        if "meta" not in index:
+            index["meta"] = dict(_SHOW_META_DEFAULTS)
+        return index
+
+    index = {"meta": dict(_SHOW_META_DEFAULTS), "episodes": []}
+    os.makedirs(show_dir, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(index, f, indent=2, ensure_ascii=False)
+    print(f"  [NOTE] Show config created -> {path}")
+    print("         Edit the \"meta\" section with your show details (author, link, etc.)")
+    return index
 
 
 def _save_show_index(show_dir: str, index: dict) -> None:
@@ -661,6 +685,12 @@ def _save_show_index(show_dir: str, index: dict) -> None:
 def _build_show_feed(show: str, index: dict) -> str:
     """Build a complete podcast RSS 2.0 feed from the show index."""
     show_title = show.replace("-", " ").replace("_", " ").title() if show else "vidscribe Podcast"
+    meta       = index.get("meta", {})
+    author     = meta.get("author", "vidscribe")
+    link       = meta.get("link", "")
+    category   = meta.get("category", "")
+    owner      = meta.get("owner_email", "")
+    language   = meta.get("language", "en")
 
     items = []
     for ep in index["episodes"]:
@@ -675,15 +705,26 @@ def _build_show_feed(show: str, index: dict) -> str:
             "    </item>"
         )
 
+    channel = (
+        f'    <title>{_xml_escape(show_title)}</title>\n'
+        f'    <description>{_xml_escape(show_title)}</description>\n'
+        f'    <language>{_xml_escape(language)}</language>\n'
+        f'    <itunes:author>{_xml_escape(author)}</itunes:author>\n'
+        '    <itunes:explicit>false</itunes:explicit>\n'
+    )
+    if link:
+        channel += f'    <link>{_xml_escape(link)}</link>\n'
+    if owner:
+        channel += f'    <itunes:owner><itunes:email>{_xml_escape(owner)}</itunes:email></itunes:owner>\n'
+    if category:
+        channel += f'    <itunes:category text="{_xml_escape(category)}"/>\n'
+
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<rss version="2.0"\n'
         '     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">\n'
         '  <channel>\n'
-        f'    <title>{_xml_escape(show_title)}</title>\n'
-        f'    <description>{_xml_escape(show_title)}</description>\n'
-        '    <itunes:author>vidscribe</itunes:author>\n'
-        '    <itunes:explicit>false</itunes:explicit>\n'
+        + channel
         + "\n".join(items) + "\n"
         '  </channel>\n'
         '</rss>\n'
