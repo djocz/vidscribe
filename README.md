@@ -22,9 +22,9 @@ All outputs are written into a **single folder per video** named after its uniqu
 outputs/
   dQw4w9WgXcQ/                     ← YouTube video ID
       audio.mp3
-      Never Gonna Give You Up.srt
-      Never Gonna Give You Up.vtt
-      Never Gonna Give You Up_transcript.txt
+      never_gonna_give_you_up.srt
+      never_gonna_give_you_up.vtt
+      never_gonna_give_you_up_transcript.txt
       manifest.json
 
   my_lecture/                       ← local file stem
@@ -67,32 +67,32 @@ sudo apt install ffmpeg
 ### YouTube video
 
 ```bash
-python subtitle_generator.py run --input "https://youtube.com/watch?v=abc123"
+python vidscribe.py run --input "https://youtube.com/watch?v=abc123"
 ```
 
 ### Local video file
 
 ```bash
-python subtitle_generator.py run --input /path/to/lecture.mp4
+python vidscribe.py run --input /path/to/lecture.mp4
 ```
 
 ### Local audio file
 
 ```bash
-python subtitle_generator.py run --input /path/to/recording.mp3
+python vidscribe.py run --input /path/to/recording.mp3
 ```
 
 ### Choose Whisper model size
 
 ```bash
-python subtitle_generator.py run --input "..." --model large
+python vidscribe.py run --input "..." --model large
 ```
 
 ### Get help
 
 ```bash
-python subtitle_generator.py --help
-python subtitle_generator.py run --help
+python vidscribe.py --help
+python vidscribe.py run --help
 ```
 
 ---
@@ -145,9 +145,9 @@ Every run writes a `manifest.json` alongside the subtitle files:
   "processed_at": "2024-03-15T14:30:22+00:00",
   "files": {
     "audio": "audio.mp3",
-    "srt": "Never Gonna Give You Up.srt",
-    "vtt": "Never Gonna Give You Up.vtt",
-    "transcript": "Never Gonna Give You Up_transcript.txt"
+    "srt": "never_gonna_give_you_up.srt",
+    "vtt": "never_gonna_give_you_up.vtt",
+    "transcript": "never_gonna_give_you_up_transcript.txt"
   }
 }
 ```
@@ -158,7 +158,7 @@ Every run writes a `manifest.json` alongside the subtitle files:
 
 ```
 project/
-├── subtitle_generator.py   ← main script
+├── vidscribe.py            ← main script
 ├── README.md
 └── outputs/
     └── {video_id}/         ← one folder per video
