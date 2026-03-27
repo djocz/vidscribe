@@ -603,21 +603,89 @@ def publish_podcast(
     audio_path: str,
     result: dict,
     video_folder: str,
-    base_url: str = "",
+    audio_url: str = "",
 ) -> dict:
     """
     Write a podcast_feed.xml RSS 2.0 feed for the episode.
 
-    base_url — if provided, the audio URL is set to base_url/audio.mp3
-               instead of a placeholder, e.g.:
-               https://my-bucket.r2.dev/podcast/my_video/
+    audio_url — full public URL of the hosted audio file. If empty, a
+                placeholder is written that the user must replace manually.
 
     Returns {"rss_file": str}.
     """
-    rss_file  = os.path.join(video_folder, "podcast_feed.xml")
-    audio_url = base_url.rstrip("/") + "/" + os.path.basename(audio_path) if base_url else ""
+    rss_file = os.path.join(video_folder, "podcast_feed.xml")
     _generate_rss(title, audio_path, result, rss_file, audio_url=audio_url)
     return {"rss_file": rss_file}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  STEP 6 — Upload audio to Cloudflare R2  (optional, --upload r2)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _upload_to_r2(audio_path: str, vid_id: str, show: str) -> str | None:
+    """
+    Upload audio.mp3 to Cloudflare R2 using the S3-compatible API.
+
+    Requires in .env:
+        R2_ACCOUNT_ID        — found on the R2 overview page
+        R2_ACCESS_KEY_ID     — R2 API token (Access Key ID)
+        R2_SECRET_ACCESS_KEY — R2 API token (Secret Access Key)
+        R2_BUCKET            — bucket name  (e.g. vidscribe-podcast)
+        R2_PUBLIC_URL        — public bucket URL  (e.g. https://pub-abc.r2.dev)
+
+    File is stored at:
+        {show}/{vid_id}/audio.mp3   (when --show is provided)
+        {vid_id}/audio.mp3          (when --show is omitted)
+
+    Returns the public URL of the uploaded file, or None on failure.
+    """
+    boto3 = _require("boto3")
+
+    account_id = os.environ.get("R2_ACCOUNT_ID", "").strip()
+    access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
+    bucket     = os.environ.get("R2_BUCKET", "").strip()
+    public_url = os.environ.get("R2_PUBLIC_URL", "").strip()
+
+    missing = [k for k, v in {
+        "R2_ACCOUNT_ID": account_id, "R2_ACCESS_KEY_ID": access_key,
+        "R2_SECRET_ACCESS_KEY": secret_key, "R2_BUCKET": bucket,
+        "R2_PUBLIC_URL": public_url,
+    }.items() if not v]
+
+    if missing:
+        print(
+            f"\n  [SKIP] R2 upload: missing .env vars: {', '.join(missing)}\n"
+            "  Add to .env:\n"
+            "      R2_ACCOUNT_ID=...\n"
+            "      R2_ACCESS_KEY_ID=...\n"
+            "      R2_SECRET_ACCESS_KEY=...\n"
+            "      R2_BUCKET=vidscribe-podcast\n"
+            "      R2_PUBLIC_URL=https://pub-xxx.r2.dev\n"
+        )
+        return None
+
+    key = f"{show}/{vid_id}/audio.mp3" if show else f"{vid_id}/audio.mp3"
+
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url         = f"https://{account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id    = access_key,
+            aws_secret_access_key= secret_key,
+            region_name          = "auto",
+        )
+        print(f"  Uploading to R2  -> {bucket}/{key} ...")
+        s3.upload_file(
+            audio_path, bucket, key,
+            ExtraArgs={"ContentType": "audio/mpeg"},
+        )
+        url = public_url.rstrip("/") + "/" + key
+        print(f"  R2 audio URL     -> {url}")
+        return url
+    except Exception as e:
+        print(f"\n  [ERROR] R2 upload failed: {e}\n")
+        return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -630,6 +698,8 @@ def run_pipeline(
     chapters: bool = False,
     publish: bool = False,
     base_url: str = "",
+    upload: str = "",
+    show: str = "",
 ) -> dict:
     print("\n" + "=" * 60)
     print("  Subtitle & Transcript Generator")
@@ -701,15 +771,26 @@ def run_pipeline(
             output_file = os.path.join(video_folder, "chapters.txt"),
         )
 
+    # ── Upload audio to R2 (optional) ────────────────────────────────────────
+    r2_audio_url = ""
+    if upload == "r2":
+        r2_audio_url = _upload_to_r2(audio_file, vid_id, show) or ""
+
+    # ── Resolve final audio URL for RSS ──────────────────────────────────────
+    audio_url = (
+        r2_audio_url
+        or (base_url.rstrip("/") + "/" + os.path.basename(audio_file) if base_url else "")
+    )
+
     # ── Publish as podcast (optional) ────────────────────────────────────────
     podcast_result = None
-    if publish:
+    if publish or upload:
         podcast_result = publish_podcast(
             title        = title,
             audio_path   = audio_file,
             result       = result,
             video_folder = video_folder,
-            base_url     = base_url,
+            audio_url    = audio_url,
         )
 
     # ── Write manifest ───────────────────────────────────────────────────────
@@ -728,6 +809,7 @@ def run_pipeline(
             "transcript": os.path.basename(txt_file),
             "chapters":   os.path.basename(chapters_file) if chapters_file else None,
             "podcast_rss": os.path.basename(podcast_result["rss_file"]) if podcast_result else None,
+            "r2_audio_url": r2_audio_url or None,
         },
     }
     manifest_file = _write_manifest(video_folder, manifest_data)
@@ -753,6 +835,8 @@ def cmd_run(args: argparse.Namespace) -> None:
         chapters      = args.chapters,
         publish       = args.publish,
         base_url      = args.base_url,
+        upload        = args.upload,
+        show          = args.show,
     )
 
 
@@ -793,6 +877,9 @@ examples:
 
   Publish with audio host URL pre-filled in the RSS feed:
     python vidscribe.py run --input "..." --publish --base-url https://pub-abc.r2.dev/podcast/my_video
+
+  Upload audio to Cloudflare R2 + generate RSS (requires R2_* vars in .env):
+    python vidscribe.py run --input "..." --upload r2 --show my-tech-podcast
 
 uploading subtitles to youtube:
   YouTube Studio -> your video -> Subtitles -> Add -> Upload file -> select .vtt
@@ -857,9 +944,31 @@ adding chapters to youtube:
         metavar="URL",
         dest="base_url",
         help=(
-            "Base URL where you will host the audio file (rss mode only). "
+            "Base URL where you will host the audio file (used when not uploading). "
             "The audio filename is appended automatically. "
             "Example: --base-url https://pub-abc123.r2.dev/podcast/my_video"
+        ),
+    )
+    run_p.add_argument(
+        "--upload",
+        default="",
+        choices=["r2"],
+        metavar="SERVICE",
+        help=(
+            "Upload audio to a cloud storage service and generate RSS automatically. "
+            "Supported: r2 (Cloudflare R2). "
+            "Requires R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, "
+            "R2_BUCKET, R2_PUBLIC_URL in .env."
+        ),
+    )
+    run_p.add_argument(
+        "--show",
+        default="",
+        metavar="SHOW",
+        help=(
+            "Show name used as a folder prefix in R2 storage. "
+            "Organises multiple shows under one bucket. "
+            "Example: --show my-tech-podcast  ->  my-tech-podcast/{video_id}/audio.mp3"
         ),
     )
     run_p.set_defaults(func=cmd_run)
