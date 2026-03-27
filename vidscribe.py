@@ -619,7 +619,110 @@ def publish_podcast(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STEP 6 — Upload audio to Cloudflare R2  (optional, --upload r2)
+#  STEP 6 — Per-show RSS feed  (accumulates all episodes for a show)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _load_show_index(show_dir: str) -> dict:
+    """Load show_index.json or return a fresh empty index."""
+    path = os.path.join(show_dir, "show_index.json")
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"episodes": []}
+
+
+def _save_show_index(show_dir: str, index: dict) -> None:
+    path = os.path.join(show_dir, "show_index.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(index, f, indent=2, ensure_ascii=False)
+
+
+def _build_show_feed(show: str, index: dict) -> str:
+    """Build a complete podcast RSS 2.0 feed from the show index."""
+    show_title = show.replace("-", " ").replace("_", " ").title() if show else "vidscribe Podcast"
+
+    items = []
+    for ep in index["episodes"]:
+        items.append(
+            "    <item>\n"
+            f"      <title>{_xml_escape(ep['title'])}</title>\n"
+            f"      <description>{_xml_escape(ep['description'])}</description>\n"
+            f"      <enclosure url=\"{ep['audio_url']}\" length=\"{ep['audio_size']}\" type=\"audio/mpeg\"/>\n"
+            f"      <guid isPermaLink=\"false\">{ep['guid']}</guid>\n"
+            f"      <pubDate>{ep['pub_date']}</pubDate>\n"
+            f"      <itunes:duration>{ep['duration']}</itunes:duration>\n"
+            "    </item>"
+        )
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<rss version="2.0"\n'
+        '     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">\n'
+        '  <channel>\n'
+        f'    <title>{_xml_escape(show_title)}</title>\n'
+        f'    <description>{_xml_escape(show_title)}</description>\n'
+        '    <itunes:author>vidscribe</itunes:author>\n'
+        '    <itunes:explicit>false</itunes:explicit>\n'
+        + "\n".join(items) + "\n"
+        '  </channel>\n'
+        '</rss>\n'
+    )
+
+
+def update_show_feed(
+    show: str,
+    vid_id: str,
+    title: str,
+    audio_path: str,
+    audio_url: str,
+    result: dict,
+) -> str:
+    """
+    Add or update an episode in the show-level RSS feed.
+
+    The feed lives at outputs/{show}/feed.xml and accumulates every episode
+    processed under that show name, newest first.  Re-running the same video
+    replaces its existing entry rather than duplicating it.
+
+    Returns the path to the written feed.xml.
+    """
+    show_dir = os.path.join(OUTPUTS_DIR, show)
+    os.makedirs(show_dir, exist_ok=True)
+
+    segments    = result.get("segments", [])
+    description = result.get("text", "").strip()[:300]
+    if len(result.get("text", "")) > 300:
+        description += "..."
+
+    episode = {
+        "guid":        vid_id,
+        "title":       title,
+        "description": description,
+        "audio_url":   audio_url or f"REPLACE_WITH_PUBLIC_AUDIO_URL/{vid_id}/audio.mp3",
+        "audio_size":  os.path.getsize(audio_path) if os.path.isfile(audio_path) else 0,
+        "duration":    _format_duration(segments[-1]["end"]) if segments else "00:00:00",
+        "pub_date":    _rfc822_now(),
+    }
+
+    index = _load_show_index(show_dir)
+
+    # Replace existing entry for this vid_id, or prepend as new episode
+    existing = [ep for ep in index["episodes"] if ep["guid"] != vid_id]
+    index["episodes"] = [episode] + existing
+
+    _save_show_index(show_dir, index)
+
+    feed_path = os.path.join(show_dir, "feed.xml")
+    with open(feed_path, "w", encoding="utf-8") as f:
+        f.write(_build_show_feed(show, index))
+
+    ep_count = len(index["episodes"])
+    print(f"  Show feed saved  -> {feed_path}  ({ep_count} episode{'s' if ep_count != 1 else ''})")
+    return feed_path
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  STEP 7 — Upload audio to Cloudflare R2  (optional, --upload r2)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _upload_to_r2(audio_path: str, vid_id: str, show: str) -> str | None:
@@ -686,6 +789,34 @@ def _upload_to_r2(audio_path: str, vid_id: str, show: str) -> str | None:
     except Exception as e:
         print(f"\n  [ERROR] R2 upload failed: {e}\n")
         return None
+
+
+def _upload_file_to_r2(local_path: str, key: str, content_type: str = "application/xml") -> None:
+    """Upload any local file to R2 at the given key. Used for show feed.xml."""
+    boto3 = _require("boto3")
+
+    account_id = os.environ.get("R2_ACCOUNT_ID", "").strip()
+    access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
+    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
+    bucket     = os.environ.get("R2_BUCKET", "").strip()
+    public_url = os.environ.get("R2_PUBLIC_URL", "").strip()
+
+    if not all([account_id, access_key, secret_key, bucket]):
+        return
+
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url          = f"https://{account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id     = access_key,
+            aws_secret_access_key = secret_key,
+            region_name           = "auto",
+        )
+        s3.upload_file(local_path, bucket, key, ExtraArgs={"ContentType": content_type})
+        url = public_url.rstrip("/") + "/" + key
+        print(f"  Show feed on R2  -> {url}")
+    except Exception as e:
+        print(f"\n  [ERROR] R2 feed upload failed: {e}\n")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -784,6 +915,7 @@ def run_pipeline(
 
     # ── Publish as podcast (optional) ────────────────────────────────────────
     podcast_result = None
+    show_feed_file = None
     if publish or upload:
         podcast_result = publish_podcast(
             title        = title,
@@ -792,6 +924,20 @@ def run_pipeline(
             video_folder = video_folder,
             audio_url    = audio_url,
         )
+
+    # ── Update per-show RSS feed (when --show is given) ───────────────────────
+    if show and (publish or upload):
+        show_feed_file = update_show_feed(
+            show       = show,
+            vid_id     = vid_id,
+            title      = title,
+            audio_path = audio_file,
+            audio_url  = audio_url,
+            result     = result,
+        )
+        # Upload show feed to R2 so the URL is always current
+        if upload == "r2":
+            _upload_file_to_r2(show_feed_file, f"{show}/feed.xml")
 
     # ── Write manifest ───────────────────────────────────────────────────────
     manifest_data = {
@@ -808,7 +954,8 @@ def run_pipeline(
             "vtt":        os.path.basename(vtt_file),
             "transcript": os.path.basename(txt_file),
             "chapters":   os.path.basename(chapters_file) if chapters_file else None,
-            "podcast_rss": os.path.basename(podcast_result["rss_file"]) if podcast_result else None,
+            "podcast_rss":  os.path.basename(podcast_result["rss_file"]) if podcast_result else None,
+            "show_feed":    show_feed_file,
             "r2_audio_url": r2_audio_url or None,
         },
     }
@@ -825,6 +972,7 @@ def run_pipeline(
         "chapters":      chapters_file,
         "manifest":      manifest_file,
         "podcast_rss":   podcast_result["rss_file"] if podcast_result else None,
+        "show_feed":     show_feed_file,
     }
 
 
