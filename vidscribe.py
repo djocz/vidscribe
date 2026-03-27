@@ -644,6 +644,8 @@ def publish_podcast(
 # ══════════════════════════════════════════════════════════════════════════════
 
 _SHOW_META_DEFAULTS = {
+    "title":       "",
+    "host":        "",
     "author":      "",
     "link":        "",
     "category":    "",
@@ -684,8 +686,9 @@ def _save_show_index(show_dir: str, index: dict) -> None:
 
 def _build_show_feed(show: str, index: dict) -> str:
     """Build a complete podcast RSS 2.0 feed from the show index."""
-    show_title = show.replace("-", " ").replace("_", " ").title() if show else "vidscribe Podcast"
     meta       = index.get("meta", {})
+    show_title = meta.get("title", "") or (show.replace("-", " ").replace("_", " ").title() if show else "vidscribe Podcast")
+    host       = meta.get("host", "")
     author     = meta.get("author", "vidscribe")
     link       = meta.get("link", "")
     category   = meta.get("category", "")
@@ -709,13 +712,18 @@ def _build_show_feed(show: str, index: dict) -> str:
         f'    <title>{_xml_escape(show_title)}</title>\n'
         f'    <description>{_xml_escape(show_title)}</description>\n'
         f'    <language>{_xml_escape(language)}</language>\n'
-        f'    <itunes:author>{_xml_escape(author)}</itunes:author>\n'
+        f'    <itunes:author>{_xml_escape(host or author)}</itunes:author>\n'
         '    <itunes:explicit>false</itunes:explicit>\n'
     )
     if link:
         channel += f'    <link>{_xml_escape(link)}</link>\n'
     if owner:
-        channel += f'    <itunes:owner><itunes:email>{_xml_escape(owner)}</itunes:email></itunes:owner>\n'
+        channel += (
+            f'    <itunes:owner>\n'
+            f'      <itunes:name>{_xml_escape(author)}</itunes:name>\n'
+            f'      <itunes:email>{_xml_escape(owner)}</itunes:email>\n'
+            f'    </itunes:owner>\n'
+        )
     if category:
         channel += f'    <itunes:category text="{_xml_escape(category)}"/>\n'
 
