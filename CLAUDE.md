@@ -6,19 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # YouTube video
-python youtube_subtitle_generator.py run --input "https://youtube.com/watch?v=VIDEO_ID"
+python vidscribe.py run --input "https://youtube.com/watch?v=VIDEO_ID"
 
 # Local video or audio file
-python youtube_subtitle_generator.py run --input /path/to/file.mp4
+python vidscribe.py run --input /path/to/file.mp4
 
 # With AI chapter generation (requires ANTHROPIC_API_KEY)
-python youtube_subtitle_generator.py run --input "..." --chapters
+python vidscribe.py run --input "..." --chapters
 
 # With a specific Whisper model (default: small)
-python youtube_subtitle_generator.py run --input "..." --model medium
+python vidscribe.py run --input "..." --model medium
 
 # Help
-python youtube_subtitle_generator.py run --help
+python vidscribe.py run --help
 ```
 
 ## Dependencies
@@ -47,4 +47,4 @@ All outputs land in `outputs/{video_id}/` (YouTube ID) or `outputs/{filename_ste
 
 ## Note on Script Name
 
-The actual script file is `youtube_subtitle_generator.py` but the README and docstring reference `subtitle_generator.py` — use the actual filename when running commands.
+The script file is `vidscribe.py`.

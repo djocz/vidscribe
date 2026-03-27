@@ -67,20 +67,20 @@ IMPORTANT: Add .env to your .gitignore so the key is never committed:
 CLI USAGE
 ---------
   # YouTube URL:
-      python subtitle_generator.py run --input "https://youtube.com/watch?v=ID"
+      python vidscribe.py run --input "https://youtube.com/watch?v=ID"
 
   # Local video file:
-      python subtitle_generator.py run --input /path/to/my_lecture.mp4
+      python vidscribe.py run --input /path/to/my_lecture.mp4
 
   # Generate AI chapters alongside subtitles:
-      python subtitle_generator.py run --input "..." --chapters
+      python vidscribe.py run --input "..." --chapters
 
   # Choose Whisper model size (default: small):
-      python subtitle_generator.py run --input "..." --model medium
+      python vidscribe.py run --input "..." --model medium
 
   # Full help:
-      python subtitle_generator.py --help
-      python subtitle_generator.py run --help
+      python vidscribe.py --help
+      python vidscribe.py run --help
 
 WHISPER MODEL SIZES
 -------------------
@@ -587,7 +587,7 @@ def run_pipeline(input_value: str, whisper_model: str = "small", chapters: bool 
 
     # ── Build a safe filename from the video title ───────────────────────────
     safe = re.sub(r"[^\w\s\-]", "", title, flags=re.UNICODE)
-    safe = re.sub(r"\s+", " ", safe).strip()[:60] or vid_id
+    safe = re.sub(r"\s+", "_", safe.strip()).lower()[:60] or vid_id
 
     # ── Write subtitle and transcript files ──────────────────────────────────
     print()
@@ -650,7 +650,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="subtitle_generator",
+        prog="vidscribe",
         description=(
             "Generate subtitles, transcripts, and AI-based chapter markers "
             "from a YouTube URL or local video file using OpenAI Whisper."
@@ -659,22 +659,22 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="""
 examples:
   YouTube video:
-    python subtitle_generator.py run --input "https://youtube.com/watch?v=abc123"
+    python vidscribe.py run --input "https://youtube.com/watch?v=abc123"
 
   Local video file:
-    python subtitle_generator.py run --input /path/to/lecture.mp4
+    python vidscribe.py run --input /path/to/lecture.mp4
 
   Local audio file:
-    python subtitle_generator.py run --input /path/to/recording.mp3
+    python vidscribe.py run --input /path/to/recording.mp3
 
   Generate AI chapters (requires ANTHROPIC_API_KEY):
-    python subtitle_generator.py run --input "..." --chapters
+    python vidscribe.py run --input "..." --chapters
 
   Use a more accurate Whisper model:
-    python subtitle_generator.py run --input /path/to/lecture.mp4 --model large
+    python vidscribe.py run --input /path/to/lecture.mp4 --model large
 
   Transcribe + chapters in one go:
-    python subtitle_generator.py run --input "https://youtube.com/watch?v=abc123" --model medium --chapters
+    python vidscribe.py run --input "https://youtube.com/watch?v=abc123" --model medium --chapters
 
 uploading subtitles to youtube:
   YouTube Studio -> your video -> Subtitles -> Add -> Upload file -> select .vtt
